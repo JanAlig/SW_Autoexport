@@ -1,0 +1,90 @@
+Option Explicit
+
+' Läuft ohne gesetzte Verweise (Late Binding).
+' Exportiert alle Konfigurationen des aktiven Teils oder der Baugruppe als STEP (.stp)
+' in den gleichen Ordner wie das Original:  <Dateiname>_<Konfig>.stp
+'
+' Verwendete Zahlenwerte (zur Umgehung von Enums/Verweisen):
+'   Dokumenttypen: PART=1, ASSEMBLY=2, DRAWING=3
+'   SaveAs-Optionen: Silent=1, Copy=2   -> zusammen 3
+
+Sub main()
+    On Error GoTo EH
+
+    Dim swApp As Object
+    Dim swModel As Object
+    Set swApp = Application.SldWorks
+    Set swModel = swApp.ActiveDoc
+
+    If swModel Is Nothing Then
+        MsgBox "Kein aktives Dokument.", vbExclamation, "STEP-Export"
+        Exit Sub
+    End If
+
+    ' Zeichnung ausschließen (3 = Drawing)
+    If swModel.GetType = 3 Then
+        MsgBox "Bitte ein Teil oder eine Baugruppe öffnen (Zeichnungen werden nicht unterstützt).", vbExclamation, "STEP-Export"
+        Exit Sub
+    End If
+
+    ' Datei muss gespeichert sein, um Pfad zu kennen
+    Dim fullPath As String
+    fullPath = swModel.GetPathName
+    If Len(fullPath) = 0 Then
+        MsgBox "Bitte die Datei zuerst speichern, damit der Exportpfad ermittelt werden kann.", vbExclamation, "STEP-Export"
+        Exit Sub
+    End If
+
+    Dim baseFolder As String, baseName As String
+    baseFolder = Left$(fullPath, InStrRev(fullPath, "\") - 1)
+    baseName = Mid$(fullPath, InStrRev(fullPath, "\") + 1)
+    If InStrRev(baseName, ".") > 0 Then baseName = Left$(baseName, InStrRev(baseName, ".") - 1)
+
+    ' Konfigurationen holen
+    Dim confNames As Variant
+    confNames = swModel.GetConfigurationNames
+    If IsEmpty(confNames) Then
+        MsgBox "Keine Konfigurationen gefunden.", vbExclamation, "STEP-Export"
+        Exit Sub
+    End If
+
+    Dim i As Long, confName As String, targetFile As String
+    Dim saveErr As Long, saveWarn As Long
+    Dim ok As Boolean
+
+    For i = LBound(confNames) To UBound(confNames)
+        confName = CStr(confNames(i))
+
+        ' Konfiguration aktivieren
+        swModel.ShowConfiguration2 confName
+
+        ' Ziel-Dateiname
+        targetFile = baseFolder & "\" & baseName & "_" & SanitizeFilePart(confName) & ".stp"
+
+        saveErr = 0: saveWarn = 0
+        ' SaveAs mit nur Extension-gesteuertem Format:
+        ' Version=0 (Current), Optionen = Silent(1) + Copy(2) = 3, ExportData = Nothing
+        ok = swModel.Extension.SaveAs(targetFile, 0, 3, Nothing, saveErr, saveWarn)
+
+        If Not ok Or saveErr <> 0 Then
+            MsgBox "Export fehlgeschlagen für Konfiguration:" & vbCrLf & _
+                   confName & vbCrLf & "Datei: " & targetFile & vbCrLf & _
+                   "Fehlercode: " & CStr(saveErr), vbCritical, "STEP-Export"
+        End If
+    Next i
+
+    MsgBox "STEP-Export abgeschlossen." & vbCrLf & "Ordner: " & baseFolder, vbInformation, "STEP-Export"
+    Exit Sub
+
+EH:
+    MsgBox "Unerwarteter Fehler: " & Err.Description, vbCritical, "STEP-Export"
+End Sub
+
+Private Function SanitizeFilePart(ByVal s As String) As String
+    Dim badChars As Variant, i As Long
+    badChars = Array("\", "/", ":", "*", "?", """", "<", ">", "|")
+    For i = LBound(badChars) To UBound(badChars)
+        s = Replace$(s, CStr(badChars(i)), "_")
+    Next i
+    SanitizeFilePart = s
+End Function
